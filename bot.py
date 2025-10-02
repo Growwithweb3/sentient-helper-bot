@@ -1,8 +1,13 @@
 from dotenv import load_dotenv
 import os
 
-load_dotenv()  # load variables from .env
-TOKEN = os.getenv("TOKEN")
+load_dotenv()
+
+print("DEBUG: Current folder:", os.getcwd())
+print("DEBUG: .env exists:", os.path.isfile(".env"))
+
+TOKEN = os.getenv("TOKEN") or os.getenv("BOT_TOKEN")
+print("DEBUG: TOKEN =", TOKEN)
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters

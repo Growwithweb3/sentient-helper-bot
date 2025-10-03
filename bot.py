@@ -1,5 +1,4 @@
 #setup + debugging section
-
 from dotenv import load_dotenv
 import os
 
@@ -17,15 +16,12 @@ import requests
 from huggingface_hub import InferenceClient
 
 #Greeting msg send by bot
-
 first_time_users = set()
 
 # USER STATE [A dictionary (user_state = {}) that remembers what a user is currently doing]
-
 user_state = {}
 
 # HUGGING FACE DOBBY AI SETUP [Connects the bot to Hugging Face’s AI model Dobby]
-
 HF_TOKEN = os.getenv("HF_TOKEN")
 
 dobby_client = InferenceClient(
@@ -41,7 +37,7 @@ def get_dobby_response(user_question):
                 {"role": "system", "content": "You are Dobby AI, assistant for Sentient community."},
                 {"role": "user", "content": user_question}
             ],
-            max_tokens=300
+            max_tokens=300,
         )
         return response.choices[0].message["content"]
     except Exception as e:
@@ -51,11 +47,9 @@ def get_dobby_response(user_question):
 #OWNER_ID = 6141979711 
 
 #GOOGLE FORM [Usecase for user: if any problem arises in bot answer or for other query]
-
 FORM_LINK = "https://forms.gle/PoFCvvGboz4E9dJv6"
 
 #QUERY CATEGORIES [Predefined FAQ database]
-
 query_categories = {
     "About Sentient": {
         "What is Sentient?": (
@@ -85,10 +79,19 @@ query_categories = {
     }
 }
 
-# START COMMAND[Defines /start command in tg bot]
+# START COMMAND [Defines /start command in tg bot]
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     user_state[user_id] = None
+
+    #FIRST-TIME GREETING (appears only once per user)
+    if user_id not in first_time_users:
+        first_time_users.add(user_id)
+        await update.message.reply_text(
+            "👋 Hey there!\nThis is Sentient Bot (⚠️Unofficial).\n"
+            "Type /start anytime to open the main menu."
+        )
+
 
     keyboard = [
         [InlineKeyboardButton("Sentient Query", callback_data="sentient_query")],
@@ -100,8 +103,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-
-# BUTTON CALLBACK[Handles button clicks, this section control all the flow of command given to user]
+# BUTTON CALLBACK [Handles button clicks, this section control all the flow of command given to user]
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -112,6 +114,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "sentient_query":
         keyboard = [[InlineKeyboardButton(cat, callback_data=f"cat|{cat}")] for cat in query_categories]
         keyboard.append([InlineKeyboardButton("Any other question (click here)", url=FORM_LINK)])
+        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="main_menu")])
         await query.edit_message_text(
             "Select a category:",
             reply_markup=InlineKeyboardMarkup(keyboard)
@@ -122,6 +125,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         category = data.split("|", 1)[1]
         keyboard = [[InlineKeyboardButton(q, callback_data=f"q|{category}|{q}")] for q in query_categories[category]]
         keyboard.append([InlineKeyboardButton("Any other question (click here)", url=FORM_LINK)])
+        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="sentient_query")])
         await query.edit_message_text(
             f"Category: {category}\nSelect a question:",
             reply_markup=InlineKeyboardMarkup(keyboard)
@@ -130,8 +134,22 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Show answer for a selected question using predefined FAQ
     elif data.startswith("q|"):
         _, category, question = data.split("|", 2)
-        answer = query_categories[category][question]  # ✅ use predefined answer here
-        await query.edit_message_text(f"Q: {question}\n\nA: {answer}")
+        answer = query_categories[category][question]
+        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data=f"cat|{category}")]]
+        await query.edit_message_text(
+            f"Q: {question}\n\nA: {answer}",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    # Go back to main menu
+    elif data == "main_menu":
+        keyboard = [
+            [InlineKeyboardButton("Sentient Query", callback_data="sentient_query")],
+            [InlineKeyboardButton("Ask Dobby AI Anything", callback_data="ask_dobby")],
+            [InlineKeyboardButton("Live Crypto Prices", callback_data="crypto")]
+        ]
+        await query.edit_message_text("Welcome back to main menu! Choose an option:",
+                                      reply_markup=InlineKeyboardMarkup(keyboard))
 
     # Ask Dobby anything flow
     elif data == "ask_dobby":
@@ -143,28 +161,19 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Send the crypto symbol (e.g., BTC, ETH, DOGE). Use lowercase coin id like 'bitcoin'.")
         user_state[user_id] = "waiting_crypto"
 
-# MESSAGE HANDLER[Processes normal text messages from users]
-
+# MESSAGE HANDLER [Processes normal text messages from users]
 async def custom_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     text = update.message.text.strip()
 
-        #  FIRST-TIME GREETING
-    if user_id not in first_time_users:
-        first_time_users.add(user_id)
-        await update.message.reply_text(
-            "👋 Hey there!\nThis is Sentient Bot (⚠️Unofficial)\nUse /start command to use the bot or to go in main menue"
-        )
-        return  # [stop further processing until user sends next message]
-
-    # Dobby AI flow
+    # ---- Dobby AI flow ----
     if user_state.get(user_id) == "waiting_dobby":
         await update.message.reply_text("🤔 Thinking...")
         answer = get_dobby_response(text)
         await update.message.reply_text(f"Dobby says:\n\n{answer}")
         return
 
-    # Crypto price flow
+    # ---- Crypto price flow ----
     if user_state.get(user_id) == "waiting_crypto":
         price = get_crypto_price(text.lower())
         if price is not None:
@@ -174,7 +183,7 @@ async def custom_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_state[user_id] = None
         return
 
-    # Default
+    # ---- Default ----
     await update.message.reply_text("Use /start to begin!")
 
 # CRYPTO PRICE FUNCTION (Uses CoinGecko API to fetch live USD price of a crypto)

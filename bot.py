@@ -1,6 +1,9 @@
-#setup + debugging section
+# SETUP + DEBUGGING 
 from dotenv import load_dotenv
-import os
+import os, requests, asyncio
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
+from huggingface_hub import InferenceClient
 
 load_dotenv()
 
@@ -8,22 +11,10 @@ print("DEBUG: Current folder:", os.getcwd())
 print("DEBUG: .env exists:", os.path.isfile(".env"))
 
 TOKEN = os.getenv("TOKEN") or os.getenv("BOT_TOKEN")
+HF_TOKEN = os.getenv("HF_TOKEN")
 print("DEBUG: TOKEN =", TOKEN)
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
-import requests
-from huggingface_hub import InferenceClient
-
-#Greeting msg send by bot
-first_time_users = set()
-
-# USER STATE [A dictionary (user_state = {}) that remembers what a user is currently doing]
-user_state = {}
-
-# HUGGING FACE DOBBY AI SETUP [Connects the bot to Hugging Face’s AI model Dobby]
-HF_TOKEN = os.getenv("HF_TOKEN")
-
+# HUGGING FACE DOBBY AI 
 dobby_client = InferenceClient(
     model="SentientAGI/Dobby-Mini-Unhinged-Llama-3.1-8B",
     token=HF_TOKEN
@@ -43,13 +34,31 @@ def get_dobby_response(user_question):
     except Exception as e:
         return f"Error: {str(e)}"
 
-# CONFIG [Stores important IDs like bot owner TG id] [Not in use for now]
-#OWNER_ID = 6141979711 
+# QUILLCHECK ASYNC
+def get_quillcheck_analysis(symbol):
+    try:
+        query = f"Give a short crypto analysis for {symbol.upper()} (trend, sentiment, major movements)."
+        response = dobby_client.chat.completions.create(
+            model="SentientAGI/Dobby-Mini-Unhinged-Llama-3.1-8B",
+            messages=[
+                {"role": "system", "content": "You are QuillCheck, the Sentient crypto analysis agent."},
+                {"role": "user", "content": query}
+            ],
+            max_tokens=150,
+        )
+        return response.choices[0].message["content"]
+    except Exception as e:
+        return f"Error getting analysis: {str(e)}"
 
-#GOOGLE FORM [Usecase for user: if any problem arises in bot answer or for other query]
+async def get_quillcheck_analysis_async(symbol):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, get_quillcheck_analysis, symbol)
+
+# USER STATE 
+first_time_users = set()
+user_state = {}
 FORM_LINK = "https://forms.gle/PoFCvvGboz4E9dJv6"
 
-#QUERY CATEGORIES [Predefined FAQ database]
 query_categories = {
     "About Sentient": {
         "What is Sentient?": (
@@ -79,19 +88,17 @@ query_categories = {
     }
 }
 
-# START COMMAND [Defines /start command in tg bot]
+# START COMMAND 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     user_state[user_id] = None
 
-    #FIRST-TIME GREETING (appears only once per user)
     if user_id not in first_time_users:
         first_time_users.add(user_id)
         await update.message.reply_text(
             "👋 Hey there!\nThis is Sentient Bot (⚠️Unofficial).\n"
             "Type /start anytime to open the main menu."
         )
-
 
     keyboard = [
         [InlineKeyboardButton("Sentient Query", callback_data="sentient_query")],
@@ -103,24 +110,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-# BUTTON CALLBACK [Handles button clicks, this section control all the flow of command given to user]
+# BUTTON CALLBACK 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
     user_id = query.from_user.id
 
-    # Show category list + Google Form link
     if data == "sentient_query":
         keyboard = [[InlineKeyboardButton(cat, callback_data=f"cat|{cat}")] for cat in query_categories]
         keyboard.append([InlineKeyboardButton("Any other question (click here)", url=FORM_LINK)])
         keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="main_menu")])
         await query.edit_message_text(
-            "Select a category:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            "Select a category:", reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
-    # Show questions for a category
     elif data.startswith("cat|"):
         category = data.split("|", 1)[1]
         keyboard = [[InlineKeyboardButton(q, callback_data=f"q|{category}|{q}")] for q in query_categories[category]]
@@ -131,17 +135,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
-    # Show answer for a selected question using predefined FAQ
     elif data.startswith("q|"):
         _, category, question = data.split("|", 2)
         answer = query_categories[category][question]
         keyboard = [[InlineKeyboardButton("🔙 Back", callback_data=f"cat|{category}")]]
-        await query.edit_message_text(
-            f"Q: {question}\n\nA: {answer}",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        await query.edit_message_text(f"Q: {question}\n\nA: {answer}",
+                                      reply_markup=InlineKeyboardMarkup(keyboard))
 
-    # Go back to main menu
     elif data == "main_menu":
         keyboard = [
             [InlineKeyboardButton("Sentient Query", callback_data="sentient_query")],
@@ -151,61 +151,138 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Welcome back to main menu! Choose an option:",
                                       reply_markup=InlineKeyboardMarkup(keyboard))
 
-    # Ask Dobby anything flow
     elif data == "ask_dobby":
         await query.edit_message_text("Ask me anything about Sentient! Type your question:")
         user_state[user_id] = "waiting_dobby"
 
-    # Live crypto flow
     elif data == "crypto":
-        await query.edit_message_text("Send the crypto symbol (e.g., BTC, ETH, DOGE). Use lowercase coin id like 'bitcoin'.")
+        await query.edit_message_text(
+            "Send the crypto symbol (e.g., BTC, ETH, SOL, DOGE).\n💡 Tip: You can also use /price BTC for quick access!")
         user_state[user_id] = "waiting_crypto"
 
-# MESSAGE HANDLER [Processes normal text messages from users]
+# MESSAGE HANDLER
 async def custom_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     text = update.message.text.strip()
 
-    # ---- Dobby AI flow ----
     if user_state.get(user_id) == "waiting_dobby":
         await update.message.reply_text("🤔 Thinking...")
         answer = get_dobby_response(text)
         await update.message.reply_text(f"Dobby says:\n\n{answer}")
-        return
-
-    # ---- Crypto price flow ----
-    if user_state.get(user_id) == "waiting_crypto":
-        price = get_crypto_price(text.lower())
-        if price is not None:
-            await update.message.reply_text(f"💰 Current price of {text.upper()} is ${price}")
-        else:
-            await update.message.reply_text("❌ Sorry, I couldn't find that crypto symbol.")
         user_state[user_id] = None
         return
 
-    # ---- Default ----
+    if user_state.get(user_id) == "waiting_crypto":
+        await update.message.reply_text("📊 Fetching crypto data...")
+        crypto_data = get_crypto_price_with_analysis(text.lower())
+
+        # Async QuillCheck AI analysis
+        quill_analysis = await get_quillcheck_analysis_async(text.lower())
+        if crypto_data:
+            crypto_data['quillcheck_analysis'] = quill_analysis
+
+        formatted_response = format_crypto_response(crypto_data)
+        await update.message.reply_text(formatted_response, parse_mode='Markdown')
+
+        keyboard = [
+            [InlineKeyboardButton("Check Another Crypto", callback_data="crypto")],
+            [InlineKeyboardButton("🔙 Main Menu", callback_data="main_menu")]
+        ]
+        await update.message.reply_text("What would you like to do next?",
+                                        reply_markup=InlineKeyboardMarkup(keyboard))
+        user_state[user_id] = None
+        return
+
     await update.message.reply_text("Use /start to begin!")
 
-# CRYPTO PRICE FUNCTION (Uses CoinGecko API to fetch live USD price of a crypto)
-def get_crypto_price(symbol):
+#CRYPTO HELPERS
+def get_crypto_price_with_analysis(symbol):
     coin_map = {
-        'btc': 'bitcoin',
-        'eth': 'ethereum',
-        'bnb': 'binancecoin',
-        'doge': 'dogecoin'
+        'btc': 'bitcoin', 'eth': 'ethereum', 'bnb': 'binancecoin', 'doge': 'dogecoin',
+        'ada': 'cardano', 'dot': 'polkadot', 'matic': 'matic-network', 'sol': 'solana',
+        'avax': 'avalanche-2', 'link': 'chainlink', 'atom': 'cosmos', 'xrp': 'ripple',
+        'ltc': 'litecoin'
     }
-    coin_id = coin_map.get(symbol, symbol)
-    url = f'https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd'
+    coin_id = coin_map.get(symbol.lower(), symbol.lower())
+    url = f'https://api.coingecko.com/api/v3/coins/markets'
+    params = {'vs_currency': 'usd', 'ids': coin_id, 'order': 'market_cap_desc',
+              'sparkline': 'false', 'price_change_percentage': '24h,7d'}
     try:
-        response = requests.get(url).json()
-        return response[coin_id]['usd']
-    except:
+        response = requests.get(url, params=params)
+        data = response.json()
+        if data and len(data) > 0:
+            coin_data = data[0]
+            result = {
+                'name': coin_data.get('name', 'Unknown'),
+                'symbol': coin_data.get('symbol', '').upper(),
+                'current_price': coin_data.get('current_price', 0),
+                'price_change_24h': coin_data.get('price_change_percentage_24h', 0),
+                'market_cap': coin_data.get('market_cap', 0),
+                'total_volume': coin_data.get('total_volume', 0),
+                'high_24h': coin_data.get('high_24h', 0),
+                'low_24h': coin_data.get('low_24h', 0),
+                'market_cap_rank': coin_data.get('market_cap_rank', 'N/A')
+            }
+            # Sentiment
+            pc = result['price_change_24h']
+            result['sentiment'] = '🚀 Very Bullish' if pc > 5 else '📈 Bullish' if pc > 2 else \
+                                  '➕ Slightly Bullish' if pc > 0 else '➖ Slightly Bearish' if pc > -2 else \
+                                  '📉 Bearish' if pc > -5 else '🔻 Very Bearish'
+            return result
+        else:
+            return None
+    except Exception as e:
+        print(f"Error fetching crypto data: {e}")
         return None
 
-#MAIN [Entry point of the bot] 
+def format_crypto_response(crypto_data):
+    if not crypto_data:
+        return "❌ Sorry, I couldn't find that crypto symbol. Try common ones like BTC, ETH, SOL, etc."
+
+    def format_number(num):
+        if num >= 1_000_000_000: return f"${num/1_000_000_000:.2f}B"
+        elif num >= 1_000_000: return f"${num/1_000_000:.2f}M"
+        elif num >= 1_000: return f"${num/1_000:.2f}K"
+        else: return f"${num:.2f}"
+
+    arrow = "↑" if crypto_data['price_change_24h'] > 0 else "↓" if crypto_data['price_change_24h'] < 0 else "→"
+    response = f"""
+📊 **{crypto_data['name']} ({crypto_data['symbol']})**
+━━━━━━━━━━━━━━━━━━━━
+💰 **Current Price:** ${crypto_data['current_price']:,.2f}
+📈 **24h Change:** {arrow} {crypto_data['price_change_24h']:.2f}%
+📊 **24h High/Low:** ${crypto_data['high_24h']:,.2f} / ${crypto_data['low_24h']:,.2f}
+💎 **Market Cap:** {format_number(crypto_data['market_cap'])} (Rank #{crypto_data['market_cap_rank']})
+📦 **24h Volume:** {format_number(crypto_data['total_volume'])}
+━━━━━━━━━━━━━━━━━━━━
+🎯 **Sentiment:** {crypto_data['sentiment']}
+"""
+    if 'quillcheck_analysis' in crypto_data:
+        response += f"\n🧠 *QuillCheck Analysis:*\n{crypto_data['quillcheck_analysis']}\n"
+    response += "\n💡 *Powered by Sentient Bot with real-time data*"
+    return response
+
+# PRICE COMMAND
+async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.args and len(context.args) > 0:
+        symbol = context.args[0]
+        await update.message.reply_text("📊 Fetching crypto data...")
+        crypto_data = get_crypto_price_with_analysis(symbol.lower())
+        quill_analysis = await get_quillcheck_analysis_async(symbol.lower())
+        if crypto_data:
+            crypto_data['quillcheck_analysis'] = quill_analysis
+        formatted_response = format_crypto_response(crypto_data)
+        await update.message.reply_text(formatted_response, parse_mode='Markdown')
+    else:
+        await update.message.reply_text(
+            "Usage: /price [symbol]\nExample: /price BTC or /price ethereum"
+        )
+
+# MAIN
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("price", price_command))
     app.add_handler(CallbackQueryHandler(button))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, custom_question))
     print("Bot is running...")

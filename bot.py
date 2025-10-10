@@ -203,7 +203,6 @@ def get_crypto_price_with_analysis(symbol):
         'btc': 'bitcoin', 'eth': 'ethereum', 'bnb': 'binancecoin', 'doge': 'dogecoin',
         'ada': 'cardano', 'dot': 'polkadot', 'matic': 'matic-network', 'sol': 'solana',
         'avax': 'avalanche-2', 'link': 'chainlink', 'atom': 'cosmos', 'xrp': 'ripple',
-        'ltc': 'litecoin'
     }
     coin_id = coin_map.get(symbol.lower(), symbol.lower())
     url = f'https://api.coingecko.com/api/v3/coins/markets'
@@ -280,7 +279,7 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Usage: /price [symbol]\nExample: /price BTC or /price ethereum"
         )
 
-# for vps 
+# for vps [rempve this part if you are running locally]
 
     from flask import Flask, request, jsonify
 import threading
@@ -300,6 +299,7 @@ def run_flask():
 threading.Thread(target=run_flask).start()           
 
 # MAIN
+
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))

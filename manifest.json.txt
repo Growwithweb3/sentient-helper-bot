@@ -1,0 +1,7 @@
+{
+  "name": "Sentient Crypto Assistant",
+  "description": "Answers Sentient questions with Dobby and gives crypto analysis with Quill.",
+  "trigger": "@sentitgbot",
+  "endpoint": "https://107.222.215.224:36302/dobby",
+  "auth": "none"
+}

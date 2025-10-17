@@ -4,7 +4,6 @@ import os, requests, asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 from huggingface_hub import InferenceClient
-from flask import Flask, request, jsonify
 import threading
 
 load_dotenv()
@@ -278,28 +277,7 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "Usage: /price [symbol]\nExample: /price BTC or /price ethereum"
         )
-
-# for vps [rempve this part if you are running locally]
-
-    from flask import Flask, request, jsonify
-import threading
-
-app = Flask(__name__)
-
-@app.route('/dobby', methods=['POST', 'GET'])
-def dobby():
-    data = request.json
-    question = data.get("question", "")
-    answer = f"Dobby says: You asked '{question}'"
-    return jsonify({"answer": answer})
-
-def run_flask():
-    app.run(host="0.0.0.0", port=3000)
-
-threading.Thread(target=run_flask).start()           
-
-# MAIN
-
+         
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
@@ -311,3 +289,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
